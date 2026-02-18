@@ -1,10 +1,42 @@
 [project]
 name = "defi-riskandopt-platform"
-version = "0.1.0"
-description = "Add your description here"
+version = "1.0.0"
+description = "Real-time Crypto Whale Detection & DeFi Risk Analytics Platform"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    # Async HTTP and WebSocket
+    "aiohttp>=3.9.0",
+    "websockets>=12.0",
+    # Dashboard
+    "dash>=2.17.0",
+    "dash-bootstrap-components>=1.6.0",
+    "plotly>=5.22.0",
+    # Data / numerics
+    "pandas>=2.2.0",
+    "numpy>=1.26.0",
+    # Existing
     "cryptography>=46.0.4",
     "requests>=2.32.5",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-mock>=3.14.0",
+]
+
+[project.scripts]
+whale-platform = "main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["whale_detector"]
