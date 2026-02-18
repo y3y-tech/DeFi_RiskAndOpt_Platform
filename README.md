@@ -25,6 +25,147 @@ Live dashboard at `http://localhost:8050` showing:
 - Concentration exposure table (15+ pairs)
 - Rolling alert feed
 
+## How It Works
+
+### Whale Trade Detection
+
+The platform detects "whale" trades — large position movements that can signal institutional activity or market-moving events.
+
+#### Binance (CEX) Detection Flow
+```
+WebSocket Stream (wss://stream.binance.com)
+         ↓
+    aggTrade messages (price, quantity, side)
+         ↓
+    notional_usd = price × quantity
+         ↓
+    IF notional_usd ≥ $500,000:
+        → Save as WhalePosition to database
+        → Fire HIGH alert if ≥ $5M (10× threshold)
+```
+
+#### Solana (On-Chain) Detection Flow
+```
+Poll Solana RPC every 2 seconds
+         ↓
+    Fetch new transaction signatures for SPL Token Program
+         ↓
+    Decode token transfers (amount, mint address, destination)
+         ↓
+    notional_usd = amount × token_price
+         ↓
+    IF notional_usd ≥ $250,000:
+        → Save as WhalePosition
+        → Check if destination is a known CEX deposit wallet
+        → Fire HIGH alert if ≥ $1.25M (5× threshold)
+```
+
+### CEX Deposit Detection (Early Dump Signal)
+
+When tokens flow into exchange wallets, it often precedes selling. The system tracks this pattern:
+
+```
+Whale transfers tokens → Exchange hot wallet
+         ↓
+5-minute sliding window accumulates all transfers
+         ↓
+IF window_total ≥ $1M:  → HIGH alert
+IF window_total ≥ $3M:  → CRITICAL alert ("potential dump incoming")
+```
+
+### Trading Pairs Explained
+
+Trading pairs represent the exchange rate between two assets. For example:
+- **BTCUSDT** = Bitcoin priced in USDT (Tether stablecoin)
+- **ETHUSDT** = Ethereum priced in USDT
+
+The platform monitors 18 pairs across different categories:
+
+| Category | Pairs |
+|----------|-------|
+| **Majors** | BTCUSDT, ETHUSDT, BNBUSDT, XRPUSDT, ADAUSDT |
+| **DeFi/L2** | UNIUSDT, AAVEUSDT, LDOUSDT, ARBUSDT, OPUSDT, INJUSDT |
+| **Alt L1s** | SOLUSDT, AVAXUSDT, MATICUSDT, DOTUSDT, APTUSDT, SUIUSDT, LINKUSDT |
+
+### Cascade Liquidation Risk Calculation
+
+The **LiquidationRiskModel** simulates what happens during a market crash on Aave:
+
+#### Step-by-Step Simulation:
+1. **Fetch at-risk positions** — Aave borrowers with health factor < 1.5
+2. **Simulate price drops** — For each 1% drop:
+   - Identify newly liquidatable positions (health factor < 1.0)
+   - Calculate sell pressure = Σ(collateral being liquidated)
+   - Estimate price impact = sell_pressure / available_liquidity
+   - Update prices and repeat (cascade effect)
+3. **Stop** when no new liquidations or price drops > 50%
+
+#### Composite Risk Score (0-1):
+```
+risk_score =
+    0.30 × depth_score       (number of positions at risk, log-scaled)
+  + 0.30 × debt_score        (total USD at risk, log-scaled)
+  + 0.25 × price_impact      (simulated market impact)
+  + 0.15 × concentration_hhi (debt concentration by asset)
+```
+
+#### Alert Thresholds:
+| Score | Severity | Meaning |
+|-------|----------|---------|
+| ≥ 0.75 | CRITICAL | Cascade liquidation likely |
+| ≥ 0.50 | HIGH | Elevated systemic risk |
+| < 0.50 | MEDIUM/LOW | Normal conditions |
+
+### Data Flow: Detection to Dashboard
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│ Binance WS      │     │ Solana RPC      │     │ Aave/Uniswap    │
+│ (real-time)     │     │ (2s poll)       │     │ (60s poll)      │
+└────────┬────────┘     └────────┬────────┘     └────────┬────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    Platform Orchestrator                         │
+│  • Filter by threshold ($500k Binance, $250k Solana)            │
+│  • Detect CEX deposit patterns                                   │
+│  • Calculate concentration (HHI)                                 │
+│  • Run liquidation risk simulation                               │
+└─────────────────────────────────┬───────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     DataStore (SQLite)                           │
+│  Tables: whale_positions, cex_deposits, alerts, liquidity_snaps │
+└─────────────────────────────────┬───────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   Dashboard (Dash/Plotly)                        │
+│  • Reads from DB every 5 seconds                                 │
+│  • Renders KPIs, charts, tables                                  │
+│  • Displays alerts with severity coloring                        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Why the Dashboard Might Show No Activity
+
+If your dashboard appears empty, check:
+
+1. **Monitor not running** — The dashboard only reads data; run the full platform:
+   ```bash
+   python main.py  # or python main.py --mode all
+   ```
+
+2. **High thresholds** — Default is $500k minimum. For testing, lower in `config.py`:
+   ```python
+   min_trade_usd: float = 50_000.0  # Reduced from 500k
+   ```
+
+3. **Placeholder CEX wallets** — The Solana CEX detection uses placeholder addresses. Replace with real exchange deposit addresses in `config.py`.
+
+4. **Market conditions** — $500k+ trades happen regularly but not every minute. During low-volume periods, you may need to wait.
+
 ## Architecture
 
 ```

@@ -41,13 +41,18 @@ logger = logging.getLogger(__name__)
 # Global state (updated by background threads/tasks)
 # ---------------------------------------------------------------------------
 _store: Optional[DataStore] = None
+_store_lock = threading.Lock()
 
 
 def get_store() -> DataStore:
     global _store
     if _store is None:
-        _store = DataStore()
-        _store.initialize()
+        with _store_lock:
+            # Double-check after acquiring lock
+            if _store is None:
+                store = DataStore()
+                store.initialize()
+                _store = store
     return _store
 
 
